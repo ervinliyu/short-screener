@@ -27,7 +27,7 @@ from telegram.constants import ParseMode
 TELEGRAM_TOKEN   = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
-MIN_SCORE        = 12       # alert threshold out of 17
+MIN_SCORE        = 10       # alert threshold out of 17
 SCAN_INTERVAL    = 4 * 3600 # 4 hours in seconds
 TOP_N_VOLUME     = None     # None = all USDT-M perpetuals
 
@@ -45,9 +45,10 @@ MAX_SCORE = W_BB + W_OBV_1H + W_OBV_4H + W_RSI_4H + W_FUNDING  # 17
 BB_PERIOD    = 20
 BB_STD       = 2.0
 RSI_PERIOD   = 14
-RSI_OB       = 70          # overbought threshold
-OBV_PIVOTS   = 2           # number of swing points to compare for divergence
-FUNDING_THRESH = 0.0001    # 0.01% per 8h (positive = longs paying)
+RSI_OB         = 65          # overbought threshold (relaxed from 70)
+BB_PROXIMITY   = 0.01        # signal if price within 1% of upper band
+OBV_PIVOTS     = 2           # number of swing points to compare for divergence
+FUNDING_THRESH = 0.0001      # 0.01% per 8h (positive = longs paying)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -102,18 +103,20 @@ async def get_funding_rate(client: httpx.AsyncClient, symbol: str) -> float:
 # ─── INDICATORS ──────────────────────────────────────────────────────────────
 
 def calc_bollinger(df: pd.DataFrame) -> dict:
-    """Returns True if current close >= upper Bollinger Band."""
+    """Returns True if current close is at or within BB_PROXIMITY % of upper Bollinger Band."""
     close = df["close"]
     sma   = close.rolling(BB_PERIOD).mean()
     std   = close.rolling(BB_PERIOD).std()
     upper = sma + BB_STD * std
     current_close = close.iloc[-1]
     current_upper = upper.iloc[-1]
-    triggered = current_close >= current_upper
+    proximity_pct = (current_upper - current_close) / current_upper
+    triggered = proximity_pct <= BB_PROXIMITY  # within 1% of or above upper band
     return {
-        "signal": triggered,
-        "close":  round(current_close, 6),
-        "upper":  round(current_upper, 6),
+        "signal":   triggered,
+        "close":    round(current_close, 6),
+        "upper":    round(current_upper, 6),
+        "gap_pct":  round(proximity_pct * 100, 2),
     }
 
 
@@ -194,7 +197,7 @@ async def scan_symbol(client: httpx.AsyncClient, symbol: str) -> dict | None:
         # Fetch data concurrently
         df_1h, df_4h, funding = await asyncio.gather(
             get_klines(client, symbol, "1h", 72),
-            get_klines(client, symbol, "4h", 18),
+            get_klines(client, symbol, "4h", 50),
             get_funding_rate(client, symbol),
         )
 
@@ -260,12 +263,14 @@ def format_alert(results: list[dict]) -> str:
 
         fund_detail = f" ({r['funding']['rate']*100:.4f}%)"
 
+        bb_detail  = f" ({r['bb']['gap_pct']:+.2f}% from upper band)"
+
         lines += [
             f"━━━━━━━━━━━━━━━━━━━━",
             f"*{r['symbol']}*  |  Score: *{s}/{MAX_SCORE}* ({pct}%)  |  _{verdict}_",
             f"Price: `{r['price']}`",
             f"",
-            f"{bb_line} Bollinger Band upper touch (4H)  [w:4]",
+            f"{bb_line} Bollinger Band upper touch (4H){bb_detail}  [w:4]",
             f"{obv1h_line} OBV divergence (1H)  [w:4]",
             f"{obv4h_line} OBV divergence (4H)  [w:4]",
             f"{rsi_line} RSI 4H{rsi_detail}  [w:3]",
