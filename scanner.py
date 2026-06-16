@@ -54,7 +54,7 @@ FUNDING_THRESH = 0.0001      # 0.01% per 8h (positive = longs paying)
 
 # Pullback filter (hard gate — must pass before signals are checked)
 RSI_1D_PERIOD    = 6     # RSI period for daily timeframe
-RSI_1D_THRESHOLD = 80   # minimum RSI(6) on 1D to pass the filter
+RSI_1D_THRESHOLD = 60   # minimum RSI(6) on 1D to pass the filter
 PULLBACK_MIN_RETRACE = 0.05  # price must be at least 5% below the swing high
 PULLBACK_MAX_RETRACE = 0.20  # price must be no more than 20% below the swing high
 
@@ -291,7 +291,7 @@ async def scan_symbol(client: httpx.AsyncClient, symbol: str) -> dict | None:
         # Fetch data concurrently — includes 1D candles for RSI(6) gate
         df_1h, df_4h, df_1d, funding = await asyncio.gather(
             get_klines(client, symbol, "1h", 72),
-            get_klines(client, symbol, "4h", 50),
+            get_klines(client, symbol, "4h", 20),
             get_klines(client, symbol, "1d", 20),
             get_funding_rate(client, symbol),
         )
